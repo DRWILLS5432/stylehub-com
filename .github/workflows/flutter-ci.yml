@@ -122,37 +122,43 @@ jobs:
                 <script src="https://cdn.tailwindcss.com"></script>
                 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
                 <style>
-                  body { background-color: #f9fafb; }
+                  body { background-color: #f9fafb; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
                   .container { max-width: 1200px; margin: 0 auto; padding: 1rem; }
-                  .sidebar { width: 300px; }
-                  .chart-container { height: 250px; }
-                  .table-container { flex: 1; overflow-x: auto; }
-                  .severity-icon { font-size: 1.25rem; margin-right: 0.5rem; }
-                  tr:hover { background-color: #f1f5f9; }
+                  .summary { margin-bottom: 1.5rem; }
+                  .content { display: flex; gap: 1.5rem; }
+                  .table-container { flex: 1; }
+                  .chart-container { width: 300px; height: 300px; }
+                  table { width: 100%; border-collapse: collapse; background-color: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+                  th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid #e5e7eb; }
+                  th { background-color: #f3f4f6; font-size: 0.875rem; font-weight: 600; color: #374151; text-transform: uppercase; }
+                  tr:hover { background-color: #f9fafb; }
+                  .severity-icon { margin-right: 0.5rem; }
+                  .error { color: #dc2626; }
+                  .warning { color: #d97706; }
+                  .info { color: #2563eb; }
                 </style>
               </head>
-              <body class="font-sans antialiased">
-                <div class="container mx-auto px-4 py-6">
-                  <h1 class="text-3xl font-bold text-gray-800 mb-6">StyleHub Code Analysis Report</h1>
-                  <div class="flex flex-col lg:flex-row gap-6">
-                    <!-- Main Content -->
-                    <div class="table-container bg-white shadow rounded-lg p-6">
-                      <div class="summary mb-6">
-                        <p class="text-lg"><span class="font-semibold">Total Issues:</span> ${issues.length}</p>
-                        <p class="text-lg"><span class="font-semibold">Total Lines of Code:</span> $totalLines</p>
-                        <p class="text-lg"><span class="font-semibold">Languages Used:</span> ${languages.keys.join(', ')}</p>
-                      </div>
-                      <table class="min-w-full divide-y divide-gray-200">
-                        <thead class="bg-gray-50">
+              <body>
+                <div class="container">
+                  <h1 class="text-2xl font-bold text-gray-800 mb-6">StyleHub Code Analysis Report</h1>
+                  <div class="summary bg-white p-4 rounded-lg shadow">
+                    <p><strong>Total Issues:</strong> ${issues.length}</p>
+                    <p><strong>Total Lines of Code:</strong> $totalLines</p>
+                    <p><strong>Languages Used:</strong> ${languages.keys.join(', ')}</p>
+                  </div>
+                  <div class="content">
+                    <div class="table-container">
+                      <table>
+                        <thead>
                           <tr>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Severity</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">File</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Line</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Message</th>
-                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Code</th>
+                            <th>Severity</th>
+                            <th>File</th>
+                            <th>Line</th>
+                            <th>Message</th>
+                            <th>Code</th>
                           </tr>
                         </thead>
-                        <tbody class="bg-white divide-y divide-gray-200">
+                        <tbody>
               ''');
 
               if (issues.isNotEmpty) {
@@ -163,56 +169,47 @@ jobs:
                   final message = issue['message']?.toString() ?? 'No message';
                   final code = issue['code']?.toString() ?? 'unknown';
                   final icon = severity == 'error' ? '🛑' : severity == 'warning' ? '⚠️' : severity == 'info' ? 'ℹ️' : '';
-                  final severityColor = severity == 'error' ? 'text-red-600' : severity == 'warning' ? 'text-yellow-600' : severity == 'info' ? 'text-blue-600' : 'text-gray-600';
+                  final severityClass = severity == 'error' ? 'error' : severity == 'warning' ? 'warning' : severity == 'info' ? 'info' : '';
                   html.writeln('''
-                    <tr>
-                      <td class="px-6 py-4 whitespace-nowrap"><span class="severity-icon ${severityColor}">${icon}</span>${severity}</td>
-                      <td class="px-6 py-4">${file}</td>
-                      <td class="px-6 py-4 whitespace-nowrap">${line}</td>
-                      <td class="px-6 py-4">${message}</td>
-                      <td class="px-6 py-4">${code}</td>
-                    </tr>
+                          <tr>
+                            <td><span class="severity-icon ${severityClass}">${icon}</span>${severity}</td>
+                            <td>${file}</td>
+                            <td>${line}</td>
+                            <td>${message}</td>
+                            <td>${code}</td>
+                          </tr>
                   ''');
                 }
               } else {
-                html.writeln('<tr><td colspan="5" class="px-6 py-4 text-center text-gray-500">No analysis issues found or invalid JSON output</td></tr>');
+                html.writeln('<tr><td colspan="5" class="text-center text-gray-500">No analysis issues found.</td></tr>');
               }
 
               html.writeln('''
                         </tbody>
                       </table>
                     </div>
-                    <!-- Sidebar with Chart -->
-                    <div class="sidebar bg-white shadow rounded-lg p-6">
-                      <h2 class="text-xl font-semibold text-gray-800 mb-4">Issue Summary</h2>
-                      <div class="chart-container">
-                        <canvas id="issueChart"></canvas>
-                      </div>
+                    <div class="chart-container">
+                      <canvas id="issueChart"></canvas>
                       <script>
                         const ctx = document.getElementById('issueChart').getContext('2d');
                         new Chart(ctx, {
-                          type: 'bar',
+                          type: 'pie',
                           data: {
-                            labels: ['Errors', 'Warnings', 'Infos'],
+                            labels: ['Errors', 'Warnings', 'Projects'],
                             datasets: [{
-                              label: 'Issue Count',
                               data: [${errorCount}, ${warningCount}, ${infoCount}],
-                              backgroundColor: ['#dc2626', '#f59e0b', '#2563eb'],
-                              borderColor: ['#b91c1c', '#d97706', '#1e40af'],
-                              borderWidth: 1
+                              backgroundColor: ['#dc2626', '#d97706', '#2563eb'],
+                              borderColor: ['white', 'white', 'white'],
+                              borderWidth: 2
                             }]
                           },
                           options: {
-                            scales: {
-                              y: {
-                                beginAtZero: true,
-                                title: { display: true, text: 'Count' }
+                            plugins: {
+                              legend: {
+                                position: 'bottom'
                               }
                             },
-                            plugins: {
-                              legend: { display: false }
-                            },
-                            maintainAspectRatio: false
+                            maintainAspectRatio: true
                           }
                         });
                       </script>
@@ -222,12 +219,12 @@ jobs:
               </body>
               </html>
               ''');
-              Directory('analysis-report').createSync();
-              File('analysis-report/index.html').writeAsStringSync(html.toString());
+              Directory('analysis').createSync();
+              File('analysis/index.html').writeAsStringSync(html.toString());
             } catch (e) {
               print('Error generating report: $e');
-              Directory('analysis-report').createSync();
-              File('analysis-report/index.html').writeAsStringSync('''
+              Directory('analysis').createSync();
+              File('analysis/index.html').writeAsStringSync('''
               <!DOCTYPE html>
               <html lang="en">
               <head>
@@ -240,12 +237,9 @@ jobs:
                   .container { max-width: 1200px; margin: 0 auto; padding: 1rem; }
                 </style>
               </head>
-              <body class="font-sans antialiased">
-                <div class="container mx-auto px-4 py-6">
-                  <h1 class="text-3xl font-bold text-gray-800 mb-6">StyleHub Code Analysis Report</h1>
-                  <div class="bg-white shadow rounded-lg p-6">
-                    <h2 class="text-xl text-red-600">Error generating report: $e</h2>
-                  </div>
+              <body>
+                <div class="container">
+                  <h1 class="text-2xl font-bold text-red-600 mb-6">Error generating report: $e</h1>
                 </div>
               </body>
               </html>
@@ -254,9 +248,9 @@ jobs:
           }
           EOF
           dart run generate_report.dart
-
+          
       - name: Upload analysis report
         uses: actions/upload-artifact@v4
         with:
           name: analysis-report
-          path: analysis-report/
+          path: analysis/
