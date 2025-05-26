@@ -32,7 +32,10 @@ jobs:
           echo "    undefined_identifier: ignore" >> analysis_options.yaml
 
       - name: Run Flutter analyze and generate JSON output
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings --write=analysis.json || true
+        run: |
+          flutter analyze --no-fatal-infos --no-fatal-warnings --write=analysis.json || true
+          # Debug: Output analysis.json content to logs
+          cat analysis.json || echo "analysis.json is empty or invalid"
 
       - name: Generate HTML report
         run: |
@@ -42,12 +45,24 @@ jobs:
 
           void main() {
             try {
-              // Read and clean analysis.json
-              final jsonString = File('analysis.json').readAsStringSync();
-              final cleanedJson = jsonString.split('\n').where((line) => line.trim().startsWith('{')).join('\n');
+              // Read analysis.json
+              final jsonFile = File('analysis.json');
+              String jsonString = '';
+              if (jsonFile.existsSync()) {
+                jsonString = jsonFile.readAsStringSync().trim();
+              }
+
+              // Initialize issues list
               List issues = [];
-              if (cleanedJson.isNotEmpty) {
-                issues = jsonDecode(cleanedJson)['issues'] as List? ?? [];
+              if (jsonString.isNotEmpty && jsonString.startsWith('{')) {
+                try {
+                  final jsonData = jsonDecode(jsonString);
+                  issues = jsonData['issues'] as List? ?? [];
+                } catch (e) {
+                  print('Failed to parse JSON: $e');
+                }
+              } else {
+                print('No valid JSON in analysis.json: $jsonString');
               }
 
               // Count lines of code and detect languages
@@ -60,7 +75,8 @@ jobs:
                     final extension = entity.path.split('.').last.toLowerCase();
                     final lines = entity.readAsLinesSync().length;
                     totalLines += lines;
-                    languages[extension] = (languages[extension] ?? 0) + lines;
+                    final lang = extension == 'dart' ? 'Dart' : extension == 'yaml' ? 'YAML' : extension == 'json' ? 'JSON' : 'Other';
+                    languages[lang] = (languages[lang] ?? 0) + lines;
                   }
                 });
               }
@@ -87,7 +103,7 @@ jobs:
                 <div class="summary">
                   <p><strong>Total Issues:</strong> ${issues.length}</p>
                   <p><strong>Total Lines of Code:</strong> $totalLines</p>
-                  <p><strong>Languages Used:</strong> ${languages.keys.map((ext) => ext == 'dart' ? 'Dart' : ext == 'yaml' ? 'YAML' : ext).join(', ')}</p>
+                  <p><strong>Languages Used:</strong> ${languages.keys.join(', ')}</p>
                 </div>
                 <table>
                   <tr>
@@ -102,10 +118,10 @@ jobs:
               if (issues.isNotEmpty) {
                 for (var issue in issues) {
                   final severity = issue['severity']?.toString().toLowerCase() ?? 'unknown';
-                  final file = issue['location']?['file'] ?? 'unknown';
+                  final file = issue['location']?['file']?.toString() ?? 'unknown';
                   final line = issue['location']?['startLine']?.toString() ?? 'unknown';
-                  final message = issue['message'] ?? 'No message';
-                  final code = issue['code'] ?? 'unknown';
+                  final message = issue['message']?.toString() ?? 'No message';
+                  final code = issue['code']?.toString() ?? 'unknown';
                   html.writeln('''
                     <tr class="$severity">
                       <td>$severity</td>
@@ -124,7 +140,7 @@ jobs:
               Directory('analysis-report').createSync();
               File('analysis-report/index.html').writeAsStringSync(html.toString());
             } catch (e) {
-              print('Error processing analysis.json: $e');
+              print('Error generating report: $e');
               Directory('analysis-report').createSync();
               File('analysis-report/index.html').writeAsStringSync('''
               <!DOCTYPE html>
