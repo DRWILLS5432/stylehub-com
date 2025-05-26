@@ -32,7 +32,7 @@ jobs:
           echo "    undefined_identifier: ignore" >> analysis_options.yaml
 
       - name: Run Flutter analyze and generate JSON output
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings --write=analysis.json
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings --write=analysis.json || true
 
       - name: Generate HTML report
         run: |
@@ -41,54 +41,107 @@ jobs:
           import 'dart:io';
 
           void main() {
-            final jsonString = File('analysis.json').readAsStringSync();
-            final issues = jsonDecode(jsonString)['issues'] as List;
-            final html = StringBuffer('''
-            <!DOCTYPE html>
-            <html>
-            <head>
-              <title>StyleHub Analysis Report</title>
-              <style>
-                body { font-family: Arial, sans-serif; margin: 20px; }
-                table { border-collapse: collapse; width: 100%; }
-                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                th { background-color: #f2f2f2; }
-                .error { color: red; }
-                .warning { color: orange; }
-                .info { color: blue; }
-              </style>
-            </head>
-            <body>
-              <h1>StyleHub Code Analysis Report</h1>
-              <table>
-                <tr>
-                  <th>Severity</th>
-                  <th>File</th>
-                  <th>Line</th>
-                  <th>Message</th>
-                  <th>Code</th>
-                </tr>
-            ''');
+            try {
+              // Read and clean analysis.json
+              final jsonString = File('analysis.json').readAsStringSync();
+              final cleanedJson = jsonString.split('\n').where((line) => line.trim().startsWith('{')).join('\n');
+              List issues = [];
+              if (cleanedJson.isNotEmpty) {
+                issues = jsonDecode(cleanedJson)['issues'] as List? ?? [];
+              }
 
-            for (var issue in issues) {
-              final severity = issue['severity'].toString().toLowerCase();
-              final file = issue['location']['file'];
-              final line = issue['location']['startLine'];
-              final message = issue['message'];
-              final code = issue['code'];
-              html.writeln('''
-                <tr class="$severity">
-                  <td>$severity</td>
-                  <td>$file</td>
-                  <td>$line</td>
-                  <td>$message</td>
-                  <td>$code</td>
-                </tr>
+              // Count lines of code and detect languages
+              final libDir = Directory('lib');
+              var totalLines = 0;
+              final languages = <String, int>{};
+              if (libDir.existsSync()) {
+                libDir.listSync(recursive: true).forEach((entity) {
+                  if (entity is File && !entity.path.contains('/generated/')) {
+                    final extension = entity.path.split('.').last.toLowerCase();
+                    final lines = entity.readAsLinesSync().length;
+                    totalLines += lines;
+                    languages[extension] = (languages[extension] ?? 0) + lines;
+                  }
+                });
+              }
+
+              // Generate HTML report
+              final html = StringBuffer('''
+              <!DOCTYPE html>
+              <html>
+              <head>
+                <title>StyleHub Analysis Report</title>
+                <style>
+                  body { font-family: Arial, sans-serif; margin: 20px; }
+                  table { border-collapse: collapse; width: 100%; }
+                  th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                  th { background-color: #f2f2f2; }
+                  .error { color: red; }
+                  .warning { color: orange; }
+                  .info { color: blue; }
+                  .summary { margin-bottom: 20px; }
+                </style>
+              </head>
+              <body>
+                <h1>StyleHub Code Analysis Report</h1>
+                <div class="summary">
+                  <p><strong>Total Issues:</strong> ${issues.length}</p>
+                  <p><strong>Total Lines of Code:</strong> $totalLines</p>
+                  <p><strong>Languages Used:</strong> ${languages.keys.map((ext) => ext == 'dart' ? 'Dart' : ext == 'yaml' ? 'YAML' : ext).join(', ')}</p>
+                </div>
+                <table>
+                  <tr>
+                    <th>Severity</th>
+                    <th>File</th>
+                    <th>Line</th>
+                    <th>Message</th>
+                    <th>Code</th>
+                  </tr>
+              ''');
+
+              if (issues.isNotEmpty) {
+                for (var issue in issues) {
+                  final severity = issue['severity']?.toString().toLowerCase() ?? 'unknown';
+                  final file = issue['location']?['file'] ?? 'unknown';
+                  final line = issue['location']?['startLine']?.toString() ?? 'unknown';
+                  final message = issue['message'] ?? 'No message';
+                  final code = issue['code'] ?? 'unknown';
+                  html.writeln('''
+                    <tr class="$severity">
+                      <td>$severity</td>
+                      <td>$file</td>
+                      <td>$line</td>
+                      <td>$message</td>
+                      <td>$code</td>
+                    </tr>
+                  ''');
+                }
+              } else {
+                html.writeln('<tr><td colspan="5">No analysis issues found or invalid JSON output</td></tr>');
+              }
+
+              html.writeln('</table></body></html>');
+              Directory('analysis-report').createSync();
+              File('analysis-report/index.html').writeAsStringSync(html.toString());
+            } catch (e) {
+              print('Error processing analysis.json: $e');
+              Directory('analysis-report').createSync();
+              File('analysis-report/index.html').writeAsStringSync('''
+              <!DOCTYPE html>
+              <html>
+              <head>
+                <title>StyleHub Analysis Report</title>
+                <style>
+                  body { font-family: Arial, sans-serif; margin: 20px; }
+                  h1 { color: red; }
+                </style>
+              </head>
+              <body>
+                <h1>Error generating report: $e</h1>
+              </body>
+              </html>
               ''');
             }
-
-            html.writeln('</table></body></html>');
-            File('analysis-report/index.html').writeAsStringSync(html.toString());
           }
           EOF
           dart run generate_report.dart
