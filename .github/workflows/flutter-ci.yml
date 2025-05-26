@@ -61,9 +61,7 @@ void main() {
       final rawOutput = File('analyze_output.txt').readAsStringSync();
       final issueLines = rawOutput
           .split('\n')
-          .where((line) =>
-            line.contains(' • ') &&
-            !line.toLowerCase().contains('analyzing '))
+          .where((line) => line.contains(' • ') && !line.toLowerCase().contains('analyzing '))
           .toList();
 
       for (var line in issueLines) {
