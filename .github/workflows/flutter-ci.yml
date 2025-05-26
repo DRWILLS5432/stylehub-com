@@ -31,10 +31,16 @@ jobs:
           echo "    equality_cannot_be_equality_operand: ignore" >> analysis_options.yaml
           echo "    undefined_identifier: ignore" >> analysis_options.yaml
 
-      - name: Run Flutter analyze and generate JSON output
+      - name: Run Flutter analyze and capture output
         run: |
+          # Run analyze and save raw output for debugging
+          flutter analyze --no-fatal-infos --no-fatal-warnings > analyze_output.txt || true
+          # Attempt to generate JSON output
           flutter analyze --no-fatal-infos --no-fatal-warnings --write=analysis.json || true
-          # Debug: Output analysis.json content to logs
+          # Debug: Output contents of both files
+          echo "Raw analyze output:"
+          cat analyze_output.txt || echo "analyze_output.txt is empty"
+          echo "analysis.json content:"
           cat analysis.json || echo "analysis.json is empty or invalid"
 
       - name: Generate HTML report
@@ -45,24 +51,48 @@ jobs:
 
           void main() {
             try {
-              // Read analysis.json
-              final jsonFile = File('analysis.json');
-              String jsonString = '';
-              if (jsonFile.existsSync()) {
-                jsonString = jsonFile.readAsStringSync().trim();
-              }
-
-              // Initialize issues list
+              // Try to parse analysis.json
               List issues = [];
-              if (jsonString.isNotEmpty && jsonString.startsWith('{')) {
-                try {
-                  final jsonData = jsonDecode(jsonString);
-                  issues = jsonData['issues'] as List? ?? [];
-                } catch (e) {
-                  print('Failed to parse JSON: $e');
+              final jsonFile = File('analysis.json');
+              if (jsonFile.existsSync()) {
+                final jsonString = jsonFile.readAsStringSync().trim();
+                if (jsonString.isNotEmpty && jsonString.startsWith('{')) {
+                  try {
+                    final jsonData = jsonDecode(jsonString);
+                    issues = jsonData['issues'] as List? ?? [];
+                  } catch (e) {
+                    print('Failed to parse analysis.json: $e');
+                  }
+                } else {
+                  print('Invalid or empty JSON in analysis.json: $jsonString');
                 }
               } else {
-                print('No valid JSON in analysis.json: $jsonString');
+                print('analysis.json does not exist');
+              }
+
+              // If no issues from JSON, try parsing raw analyze output
+              if (issues.isEmpty) {
+                final rawOutput = File('analyze_output.txt').readAsStringSync();
+                final issueLines = rawOutput.split('\n').where((line) => line.contains(' • ')).toList();
+                for (var line in issueLines) {
+                  final parts = line.split(' • ');
+                  if (parts.length >= 4) {
+                    final severity = parts[0].trim().toLowerCase();
+                    final message = parts[1].trim();
+                    final location = parts[2].trim();
+                    final code = parts[3].trim();
+                    final locationParts = location.split(':');
+                    final file = locationParts[0];
+                    final lineNum = locationParts.length > 1 ? locationParts[1] : 'unknown';
+                    issues.add({
+                      'severity': severity,
+                      'message': message,
+                      'location': {'file': file, 'startLine': lineNum},
+                      'code': code,
+                    });
+                  }
+                }
+                print('Parsed ${issues.length} issues from raw output');
               }
 
               // Count lines of code and detect languages
