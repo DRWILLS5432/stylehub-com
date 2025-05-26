@@ -31,7 +31,7 @@ jobs:
               // Count metrics
               final libDir = Directory('lib');
               var totalLines = 0;
-              var moduleCount = 0; // Dart files
+              var screenCount = 0; // Screens (files in lib/screens or widgets)
               var interfaceCount = 0; // Files with 'interface' or 'abstract class'
               var classCount = 0; // Files with 'class'
               var methodCount = 0; // Method declarations
@@ -50,8 +50,13 @@ jobs:
                     languages[lang] = (languages[lang] ?? 0) + lines;
 
                     if (extension == 'dart') {
-                      moduleCount++;
                       final content = entity.readAsStringSync();
+                      // Screens: Files in lib/screens or containing StatelessWidget/StatefulWidget
+                      if (entity.path.contains('lib/screens') || 
+                          content.contains('extends StatelessWidget') || 
+                          content.contains('extends StatefulWidget')) {
+                        screenCount++;
+                      }
                       // Interfaces: 'interface' or 'abstract class'
                       if (content.contains('interface ') || content.contains('abstract class ')) {
                         interfaceCount++;
@@ -89,6 +94,9 @@ jobs:
               }
               packageCount = packages.length;
 
+              // Normalize totalLines for pie chart (scale down to avoid dominating)
+              final scaledLines = totalLines ~/ 100; // e.g., 16372 -> ~163
+
               // Generate HTML report
               final html = StringBuffer('''
               <!DOCTYPE html>
@@ -116,8 +124,7 @@ jobs:
                     <div class="metrics-container">
                       <div class="summary bg-white p-4 rounded-lg shadow">
                         <p><strong>Всего строк кода:</strong> $totalLines</p>
-                        <p><strong>Реализовано модулей:</strong> $moduleCount</p>
-                        <p><strong>Подготовлено интерфейсов:</strong> $interfaceCount</p>
+                        <p><strong>Реализовано экранов:</strong> $screenCount</p>
                         <p><strong>Реализовано классов:</strong> $classCount</p>
                         <p><strong>Реализовано методов:</strong> $methodCount</p>
                         <p><strong>Использовано виджетов:</strong> $widgetCount</p>
@@ -132,9 +139,9 @@ jobs:
                         new Chart(ctx, {
                           type: 'pie',
                           data: {
-                            labels: ['Lines', 'Modules', 'Interfaces', 'Classes', 'Methods', 'Widgets', 'Packages'],
+                            labels: ['Lines (scaled)', 'Screens', 'Interfaces', 'Classes', 'Methods', 'Widgets', 'Packages'],
                             datasets: [{
-                              data: [$totalLines, $moduleCount, $interfaceCount, $classCount, $methodCount, $widgetCount, $packageCount],
+                              data: [$scaledLines, $screenCount, $interfaceCount, $classCount, $methodCount, $widgetCount, $packageCount],
                               backgroundColor: ['#2563eb', '#10b981', '#f59e0b', '#dc2626', '#8b5cf6', '#ec4899', '#4b5563'],
                               borderColor: ['white', 'white', 'white', 'white', 'white', 'white', 'white'],
                               borderWidth: 2
