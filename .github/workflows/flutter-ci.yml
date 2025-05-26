@@ -12,12 +12,14 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.32.0' # Updated to match required SDK version ^3.5.4
+          flutter-version: '3.32.0'
           channel: stable
           architecture: x64
 
       - name: Install dependencies
-        run: flutter pub get
+        run: |
+          flutter pub add intl:^0.20.2
+          flutter pub get
 
       - name: Analyze
         run: flutter analyze
