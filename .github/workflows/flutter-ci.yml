@@ -35,247 +35,226 @@ jobs:
         run: |
           flutter analyze --no-fatal-infos --no-fatal-warnings > analyze_output.txt || true
           flutter analyze --no-fatal-infos --no-fatal-warnings --write=analysis.json || true
+          echo "Raw analyze output:"
+          cat analyze_output.txt || echo "analyze_output.txt is empty"
+          echo "analysis.json content:"
+          cat analysis.json || echo "analysis.json is empty or invalid"
 
       - name: Generate HTML report
         run: |
           cat << 'EOF' > generate_report.dart
-import 'dart:convert';
-import 'dart:io';
+          import 'dart:convert';
+          import 'dart:io';
 
-void main() {
-  try {
-    List issues = [];
+          void main() {
+            try {
+              // Try to parse analysis.json
+              List issues = [];
+              final jsonFile = File('analysis.json');
+              if (jsonFile.existsSync()) {
+                final jsonString = jsonFile.readAsStringSync().trim();
+                if (jsonString.isNotEmpty && jsonString.startsWith('{')) {
+                  try {
+                    final jsonData = jsonDecode(jsonString);
+                    issues = jsonData['issues'] as List? ?? [];
+                  } catch (e) {
+                    print('Failed to parse analysis.json: $e');
+                  }
+                } else {
+                  print('Invalid or empty JSON in analysis.json: $jsonString');
+                }
+              } else {
+                print('analysis.json does not exist');
+              }
 
-    final jsonFile = File('analysis.json');
-    if (jsonFile.existsSync()) {
-      final jsonString = jsonFile.readAsStringSync().trim();
-      if (jsonString.isNotEmpty && jsonString.startsWith('{')) {
-        try {
-          final jsonData = jsonDecode(jsonString);
-          issues = jsonData['issues'] as List? ?? [];
-        } catch (_) {}
-      }
-    }
+              // If no issues from JSON, parse raw analyze output
+              if (issues.isEmpty) {
+                final rawOutput = File('analyze_output.txt').readAsStringSync();
+                final issueLines = rawOutput.split('\n').where((line) => line.contains(' • ')).toList();
+                for (var line in issueLines) {
+                  final parts = line.split(' • ');
+                  if (parts.length >= 4) {
+                    final severity = parts[0].trim().toLowerCase();
+                    final message = parts[1].trim();
+                    final location = parts[2].trim();
+                    final code = parts[3].trim();
+                    final locationParts = location.split(':');
+                    final file = locationParts[0];
+                    final lineNum = locationParts.length > 1 ? locationParts[1] : 'unknown';
+                    issues.add({
+                      'severity': severity,
+                      'message': message,
+                      'location': {'file': file, 'startLine': lineNum},
+                      'code': code,
+                    });
+                  }
+                }
+                print('Parsed ${issues.length} issues from raw output');
+              }
 
-    if (issues.isEmpty) {
-      final rawOutput = File('analyze_output.txt').readAsStringSync();
-      final issueLines = rawOutput
-          .split('\n')
-          .where((line) => line.contains(' • ') && !line.toLowerCase().contains('analyzing '))
-          .toList();
+              // Count issues by severity for chart
+              final errorCount = issues.where((i) => i['severity'] == 'error').length;
+              final warningCount = issues.where((i) => i['severity'] == 'warning').length;
+              final infoCount = issues.where((i) => i['severity'] == 'info').length;
 
-      for (var line in issueLines) {
-        final parts = line.split(' • ');
-        if (parts.length >= 4) {
-          final severity = parts[0].trim().toLowerCase();
-          final message = parts[1].trim();
-          final location = parts[2].trim();
-          final code = parts[3].trim();
-          final locationParts = location.split(':');
-          final file = locationParts[0];
-          final lineNum = locationParts.length > 1 ? locationParts[1] : 'unknown';
+              // Count lines of code and detect languages
+              final libDir = Directory('lib');
+              var totalLines = 0;
+              final languages = <String, int>{};
+              if (libDir.existsSync()) {
+                libDir.listSync(recursive: true).forEach((entity) {
+                  if (entity is File && !entity.path.contains('/generated/')) {
+                    final extension = entity.path.split('.').last.toLowerCase();
+                    final lines = entity.readAsLinesSync().length;
+                    totalLines += lines;
+                    final lang = extension == 'dart' ? 'Dart' : extension == 'yaml' ? 'YAML' : extension == 'json' ? 'JSON' : 'Other';
+                    languages[lang] = (languages[lang] ?? 0) + lines;
+                  }
+                });
+              }
 
-          issues.add({
-            'severity': severity,
-            'message': message,
-            'location': {'file': file, 'startLine': lineNum},
-            'code': code,
-          });
-        }
-      }
-    }
+              // Generate HTML report
+              final html = StringBuffer('''
+              <!DOCTYPE html>
+              <html lang="en">
+              <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>StyleHub Code Analysis Report</title>
+                <script src="https://cdn.tailwindcss.com"></script>
+                <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+                <style>
+                  body { background-color: #f9fafb; }
+                  .container { max-width: 1200px; margin: 0 auto; padding: 1rem; }
+                  .sidebar { width: 300px; }
+                  .chart-container { height: 250px; }
+                  .table-container { flex: 1; overflow-x: auto; }
+                  .severity-icon { font-size: 1.25rem; margin-right: 0.5rem; }
+                  tr:hover { background-color: #f1f5f9; }
+                </style>
+              </head>
+              <body class="font-sans antialiased">
+                <div class="container mx-auto px-4 py-6">
+                  <h1 class="text-3xl font-bold text-gray-800 mb-6">StyleHub Code Analysis Report</h1>
+                  <div class="flex flex-col lg:flex-row gap-6">
+                    <!-- Main Content -->
+                    <div class="table-container bg-white shadow rounded-lg p-6">
+                      <div class="summary mb-6">
+                        <p class="text-lg"><span class="font-semibold">Total Issues:</span> ${issues.length}</p>
+                        <p class="text-lg"><span class="font-semibold">Total Lines of Code:</span> $totalLines</p>
+                        <p class="text-lg"><span class="font-semibold">Languages Used:</span> ${languages.keys.join(', ')}</p>
+                      </div>
+                      <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                          <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Severity</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">File</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Line</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Message</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Code</th>
+                          </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+              ''' $
 
-    int errorCount = 0, warningCount = 0, infoCount = 0;
-    for (var issue in issues) {
-      final severity = (issue['severity'] ?? '').toString().toLowerCase();
-      if (severity.contains('error')) errorCount++;
-      else if (severity.contains('warning')) warningCount++;
-      else if (severity.contains('info')) infoCount++;
-    }
+              if (issues.isNotEmpty) {
+                for (var issue in issues) {
+                  final severity = issue['severity']?.toString().toLowerCase() ?? 'unknown';
+                  final file = issue['location']?['file']?.toString() ?? 'unknown';
+                  final line = issue['location']?['startLine']?.toString() ?? 'unknown';
+                  final message = issue['message']?.toString() ?? 'No message';
+                  final code = issue['code']?.toString() ?? 'unknown';
+                  final icon = severity == 'error' ? '🛑' : severity == 'warning' ? '⚠️' : severity == 'info' ? 'ℹ️' : '';
+                  final severityColor = severity == 'error' ? 'text-red-600' : severity == 'warning' ? 'text-yellow-600' : severity == 'info' ? 'text-blue-600' : 'text-gray-600';
+                  html.writeln('''
+                    <tr>
+                      <td class="px-6 py-4 whitespace-nowrap"><span class="severity-icon ${severityColor}">${icon}</span>${severity}</td>
+                      <td class="px-6 py-4">${file}</td>
+                      <td class="px-6 py-4 whitespace-nowrap">${line}</td>
+                      <td class="px-6 py-4">${message}</td>
+                      <td class="px-6 py-4">${code}</td>
+                    </tr>
+                  ''');
+                }
+              } else {
+                html.writeln('<tr><td colspan="5" class="px-6 py-4 text-center text-gray-500">No analysis issues found or invalid JSON output</td></tr>');
+              }
 
-    final libDir = Directory('lib');
-    var totalLines = 0;
-    final languages = <String, int>{};
-    if (libDir.existsSync()) {
-      libDir.listSync(recursive: true).forEach((entity) {
-        if (entity is File && !entity.path.contains('/generated/')) {
-          final ext = entity.path.split('.').last.toLowerCase();
-          final lines = entity.readAsLinesSync().length;
-          totalLines += lines;
-          final lang = ext == 'dart'
-              ? 'Dart'
-              : ext == 'yaml'
-                  ? 'YAML'
-                  : ext == 'json'
-                      ? 'JSON'
-                      : 'Other';
-          languages[lang] = (languages[lang] ?? 0) + lines;
-        }
-      });
-    }
-
-    final html = StringBuffer('''
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>StyleHub Analysis Report</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <style>
-    body {
-      font-family: "Segoe UI", sans-serif;
-      margin: 0;
-      padding: 20px;
-      background-color: #f4f6f9;
-      color: #333;
-    }
-    h1 {
-      margin-top: 0;
-      color: #2c3e50;
-    }
-    .report-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 30px;
-      flex-wrap: wrap;
-    }
-    .summary {
-      flex: 1;
-      background-color: #fff;
-      padding: 15px 20px;
-      border-left: 5px solid #3498db;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    }
-    #issueChart {
-      max-width: 250px;
-      max-height: 250px;
-      margin-top: 5px;
-    }
-    table {
-      width: 100%;
-      margin-top: 20px;
-      border-collapse: collapse;
-      background-color: white;
-      box-shadow: 0 0 5px rgba(0,0,0,0.05);
-    }
-    th, td {
-      padding: 10px;
-      border: 1px solid #ddd;
-      font-size: 14px;
-      text-align: left;
-    }
-    th {
-      background-color: #ecf0f1;
-      position: sticky;
-      top: 0;
-      z-index: 2;
-    }
-    tr:hover {
-      background-color: #f1f1f1;
-    }
-    .severity-badge {
-      display: inline-block;
-      padding: 5px 10px;
-      border-radius: 5px;
-      font-weight: bold;
-      font-size: 12px;
-      color: white;
-      text-transform: uppercase;
-    }
-    .error .severity-badge { background: #e74c3c; }
-    .warning .severity-badge { background: #f39c12; }
-    .info .severity-badge { background: #3498db; }
-    .footer-note {
-      margin-top: 20px;
-      font-size: 12px;
-      color: #888;
-    }
-  </style>
-</head>
-<body>
-  <h1>StyleHub Code Analysis Report</h1>
-  <div class="report-header">
-    <div class="summary">
-      <p><strong>Total Issues:</strong> ${issues.length}</p>
-      <p><strong>Total Lines of Code:</strong> $totalLines</p>
-      <p><strong>Languages Used:</strong> ${languages.keys.join(', ')}</p>
-    </div>
-    <canvas id="issueChart"></canvas>
-  </div>
-
-  <table>
-    <tr>
-      <th>Severity</th>
-      <th>File</th>
-      <th>Line</th>
-      <th>Message</th>
-      <th>Code</th>
-    </tr>
-''');
-
-    for (var issue in issues) {
-      final severity = (issue['severity'] ?? 'unknown').toString().toLowerCase();
-      final file = issue['location']?['file'] ?? 'unknown';
-      final line = issue['location']?['startLine'] ?? 'unknown';
-      final message = issue['message'] ?? 'No message';
-      final code = issue['code'] ?? 'unknown';
-      final icon = severity == 'error' ? '🛑' : severity == 'warning' ? '⚠️' : severity == 'info' ? 'ℹ️' : '';
-
-      html.writeln('''
-    <tr class="$severity">
-      <td><span class="severity-badge">$icon $severity</span></td>
-      <td>$file</td>
-      <td>$line</td>
-      <td>$message</td>
-      <td>$code</td>
-    </tr>
-''');
-    }
-
-    html.writeln('''
-  </table>
-
-  <div class="footer-note">
-    Report generated using Flutter analyze and custom Dart script.
-  </div>
-
-  <script>
-    const ctx = document.getElementById('issueChart');
-    new Chart(ctx, {
-      type: 'doughnut',
-      data: {
-        labels: ['Errors', 'Warnings', 'Info'],
-        datasets: [{
-          label: 'Issues',
-          data: [$errorCount, $warningCount, $infoCount],
-          backgroundColor: ['#e74c3c', '#f39c12', '#3498db'],
-          borderWidth: 1
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: true,
-        plugins: {
-          legend: {
-            position: 'bottom'
+              html.writeln('''
+                        </tbody>
+                      </table>
+                    </div>
+                    <!-- Sidebar with Chart -->
+                    <div class="sidebar bg-white shadow rounded-lg p-6">
+                      <h2 class="text-xl font-semibold text-gray-800 mb-4">Issue Summary</h2>
+                      <div class="chart-container">
+                        <canvas id="issueChart"></canvas>
+                      </div>
+                      <script>
+                        const ctx = document.getElementById('issueChart').getContext('2d');
+                        new Chart(ctx, {
+                          type: 'bar',
+                          data: {
+                            labels: ['Errors', 'Warnings', 'Infos'],
+                            datasets: [{
+                              label: 'Issue Count',
+                              data: [${errorCount}, ${warningCount}, ${infoCount}],
+                              backgroundColor: ['#dc2626', '#f59e0b', '#2563eb'],
+                              borderColor: ['#b91c1c', '#d97706', '#1e40af'],
+                              borderWidth: 1
+                            }]
+                          },
+                          options: {
+                            scales: {
+                              y: {
+                                beginAtZero: true,
+                                title: { display: true, text: 'Count' }
+                              }
+                            },
+                            plugins: {
+                              legend: { display: false }
+                            },
+                            maintainAspectRatio: false
+                          }
+                        });
+                      </script>
+                    </div>
+                  </div>
+                </div>
+              </body>
+              </html>
+              ''');
+              Directory('analysis-report').createSync();
+              File('analysis-report/index.html').writeAsStringSync(html.toString());
+            } catch (e) {
+              print('Error generating report: $e');
+              Directory('analysis-report').createSync();
+              File('analysis-report/index.html').writeAsStringSync('''
+              <!DOCTYPE html>
+              <html lang="en">
+              <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>StyleHub Code Analysis Report</title>
+                <script src="https://cdn.tailwindcss.com"></script>
+                <style>
+                  body { background-color: #f9fafb; }
+                  .container { max-width: 1200px; margin: 0 auto; padding: 1rem; }
+                </style>
+              </head>
+              <body class="font-sans antialiased">
+                <div class="container mx-auto px-4 py-6">
+                  <h1 class="text-3xl font-bold text-gray-800 mb-6">StyleHub Code Analysis Report</h1>
+                  <div class="bg-white shadow rounded-lg p-6">
+                    <h2 class="text-xl text-red-600">Error generating report: $e</h2>
+                  </div>
+                </div>
+              </body>
+              </html>
+              ''');
+            }
           }
-        }
-      }
-    });
-  </script>
-</body>
-</html>
-''');
-
-    Directory('analysis-report').createSync();
-    File('analysis-report/index.html').writeAsStringSync(html.toString());
-
-  } catch (e) {
-    print('Error: \$e');
-  }
-}
-EOF
+          EOF
           dart run generate_report.dart
 
       - name: Upload analysis report
