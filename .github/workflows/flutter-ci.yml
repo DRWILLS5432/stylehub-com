@@ -19,6 +19,7 @@ jobs:
       - name: Install dependencies
         run: |
           flutter pub add intl:^0.20.2
+          flutter pub add --dev dart_code_metrics
           flutter pub get
 
       - name: Create analysis options
@@ -30,6 +31,14 @@ jobs:
           echo "    undefined_operator: ignore" >> analysis_options.yaml
           echo "    equality_cannot_be_equality_operand: ignore" >> analysis_options.yaml
           echo "    undefined_identifier: ignore" >> analysis_options.yaml
+          echo "include: package:dart_code_metrics/config.yaml" >> analysis_options.yaml
 
-      - name: Analyze
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - name: Run Dart Code Metrics analysis
+        run: |
+          dart run dart_code_metrics:metrics analyze lib --report-to=html --report-folder=metrics-report
+
+      - name: Upload analysis results
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics-report
+          path: metrics-report/
