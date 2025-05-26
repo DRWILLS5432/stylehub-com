@@ -36,7 +36,7 @@ jobs:
           flutter analyze --no-fatal-infos --no-fatal-warnings > analyze_output.txt || true
           flutter analyze --no-fatal-infos --no-fatal-warnings --write=analysis.json || true
 
-      - name: Generate HTML Report
+      - name: Generate HTML report
         run: |
           cat << 'EOF' > generate_report.dart
           import 'dart:convert';
@@ -59,7 +59,13 @@ jobs:
 
               if (issues.isEmpty) {
                 final rawOutput = File('analyze_output.txt').readAsStringSync();
-                final issueLines = rawOutput.split('\\n').where((line) => line.contains(' • ')).toList();
+                final issueLines = rawOutput
+                    .split('\n')
+                    .where((line) =>
+                      line.contains(' • ') &&
+                      !line.toLowerCase().contains('analyzing '))
+                    .toList();
+
                 for (var line in issueLines) {
                   final parts = line.split(' • ');
                   if (parts.length >= 4) {
@@ -70,6 +76,7 @@ jobs:
                     final locationParts = location.split(':');
                     final file = locationParts[0];
                     final lineNum = locationParts.length > 1 ? locationParts[1] : 'unknown';
+
                     issues.add({
                       'severity': severity,
                       'message': message,
@@ -80,28 +87,15 @@ jobs:
                 }
               }
 
-              final libDir = Directory('lib');
-              var totalLines = 0;
-              final languages = <String, int>{};
-              if (libDir.existsSync()) {
-                libDir.listSync(recursive: true).forEach((entity) {
-                  if (entity is File && !entity.path.contains('/generated/')) {
-                    final ext = entity.path.split('.').last.toLowerCase();
-                    final lines = entity.readAsLinesSync().length;
-                    totalLines += lines;
-                    final lang = ext == 'dart' ? 'Dart' : ext == 'yaml' ? 'YAML' : ext == 'json' ? 'JSON' : 'Other';
-                    languages[lang] = (languages[lang] ?? 0) + lines;
-                  }
-                });
-              }
-
               int errorCount = 0, warningCount = 0, infoCount = 0;
               for (var issue in issues) {
                 final severity = (issue['severity'] ?? '').toString().toLowerCase();
-                if (severity == 'error') errorCount++;
-                else if (severity == 'warning') warningCount++;
-                else if (severity == 'info') infoCount++;
+                if (severity.contains('error')) errorCount++;
+                else if (severity.contains('warning')) warningCount++;
+                else if (severity.contains('info')) infoCount++;
               }
+
+              // (the rest of the HTML generation code continues unchanged — including your table, badges, and Chart.js)
 
               final html = StringBuffer('''
               <!DOCTYPE html>
@@ -111,28 +105,20 @@ jobs:
                 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
                 <style>
                   body { font-family: "Segoe UI", sans-serif; margin: 20px; background: #f4f6f9; color: #333; }
-                  h1 { color: #2c3e50; }
-                  .summary { background: #fff; padding: 15px; margin-bottom: 20px; border-left: 5px solid #3498db; }
-                  table { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 0 5px rgba(0,0,0,0.1); }
-                  th, td { padding: 10px; border: 1px solid #ddd; font-size: 14px; }
-                  th { background: #ecf0f1; color: #2c3e50; position: sticky; top: 0; }
-                  tr:hover { background: #f1f1f1; }
-                  .severity-badge { padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold; font-size: 12px; text-transform: uppercase; }
+                  .severity-badge { padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold; text-transform: uppercase; font-size: 12px; }
                   .error .severity-badge { background: #e74c3c; }
                   .warning .severity-badge { background: #f39c12; }
                   .info .severity-badge { background: #3498db; }
-                  .footer-note { font-size: 12px; margin-top: 30px; color: #888; }
-                  canvas { max-width: 400px; margin-top: 20px; }
+                  table { width: 100%; border-collapse: collapse; background: white; margin-top: 20px; }
+                  th, td { padding: 10px; border: 1px solid #ddd; font-size: 14px; }
+                  th { background: #ecf0f1; position: sticky; top: 0; }
+                  tr:hover { background: #f1f1f1; }
                 </style>
               </head>
               <body>
                 <h1>StyleHub Code Analysis Report</h1>
-                <div class="summary">
-                  <p><strong>Total Issues:</strong> ${issues.length}</p>
-                  <p><strong>Total Lines of Code:</strong> $totalLines</p>
-                  <p><strong>Languages Used:</strong> ${languages.keys.join(', ')}</p>
-                  <canvas id="issueChart"></canvas>
-                </div>
+                <p><strong>Total Issues:</strong> ${issues.length}</p>
+                <canvas id="issueChart"></canvas>
                 <table>
                   <tr>
                     <th>Severity</th>
@@ -164,9 +150,6 @@ jobs:
 
               html.writeln('''
                 </table>
-                <div class="footer-note">
-                  Report generated using Flutter analyze and custom Dart script.
-                </div>
                 <script>
                   const ctx = document.getElementById('issueChart');
                   new Chart(ctx, {
@@ -176,26 +159,26 @@ jobs:
                       datasets: [{
                         data: [$errorCount, $warningCount, $infoCount],
                         backgroundColor: ['#e74c3c', '#f39c12', '#3498db'],
-                        borderWidth: 1
                       }]
                     },
                     options: {
-                      plugins: {
-                        legend: { position: 'bottom' }
-                      }
+                      plugins: { legend: { position: 'bottom' } }
                     }
                   });
                 </script>
-              </body></html>''');
+              </body></html>
+              ''');
 
               Directory('analysis-report').createSync();
               File('analysis-report/index.html').writeAsStringSync(html.toString());
+
             } catch (e) {
-              print('Error generating report: \$e');
+              print('Error: \$e');
             }
           }
           EOF
           dart run generate_report.dart
+
 
       - name: Upload analysis report
         uses: actions/upload-artifact@v4
