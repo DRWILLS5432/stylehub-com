@@ -1,0 +1,815 @@
+// ***********   STYLEHUB TECHNOLOGY DOCUMENTATION   ***********
+
+// 1. Core Architecture
+// 1.1 Technology Stack
+
+//     Frontend: Flutter (iOS/Android)
+//     Backend: Firebase Ecosystem
+//         Authentication
+//         Firestore (NoSQL Database)
+//         Cloud Storage
+//         Cloud Functions
+//     State Management: Provider
+//     Localization: Flutter Intl
+
+
+
+//********************  INTRODUCTION  ********************
+\section{Developing the Application}
+// StyleHub is a cross-platform mobile application designed to connect professionals (specialists)
+//  with clients across various industries. Built with Flutter and powered by Firebase, the 
+//  app features real-time scheduling, geolocation-based search, and multi-language support. 
+//  This document outlines the technical architecture, key components, and implementation details.
+
+
+// ****************** FILTER PAGE **********************
+\subsection{Categories \& Filter Page} 
+// The Categories and Filter Page allows users to browse specialists by profession, service type, location, and rating.
+
+// ******************* CATEGORIES *********************
+\paragraph{Data Source:} Firebase Firestore stores categories and specialist profiles.
+
+// \paragraph{Code Snippet: Fetching Categories}
+\begin{verbatim} 
+FirebaseFirestore.instance.collection('categories').get().then((snapshot) {
+  List<String> categories = snapshot.docs.map((doc) => doc['name']).toList();
+});
+\end{verbatim}
+
+
+
+// ********************** FILTERING *********************
+\paragraph{Filtering Specialists:}
+\begin{verbatim}
+
+Query specialistQuery = FirebaseFirestore.instance.collection('specialists');
+/// Filters specialists by the selected category.
+///
+/// If a category is selected, this adds a filter to the query to only include
+/// specialists that belong to the specified category.
+/// 
+if (selectedCategory != null) {
+  specialistQuery = specialistQuery.where('category', isEqualTo: selectedCategory);
+  /// If a category is selected, this adds a filter to the query to only include
+  /// specialists that belong to the specified category.
+}
+if (ratingFilter != null) {
+  specialistQuery = specialistQuery.where('rating', isGreaterThanOrEqualTo: ratingFilter);
+  /// If a rating filter is provided, this adds a filter to the query to only
+  /// include specialists with a rating greater than or equal to the given
+  /// rating.
+}
+specialistQuery.get().then((snapshot) {
+  // Display filtered specialists
+});
+\end{verbatim}
+
+
+
+// *************** AUTHENTICATION MODULE ***************
+\subsection{Authentication}
+/// Signs in a user with the given email address and password.
+/// Throws a [FirebaseAuthException] if the sign-in fails.
+StyleHub uses \textbf{Firebase Authentication} to support:
+
+\paragraph{Code Snippet: Email/Password Login}
+\begin{verbatim}
+FirebaseAuth.instance.signInWithEmailAndPassword(
+  email: emailController.text.trim(),
+  password: passwordController.text.trim(),
+);
+\end{verbatim}
+
+\paragraph{Email/Password Sign-Up:}
+\begin{verbatim}
+// Controllers for registration form
+final TextEditingController firstNameController = TextEditingController();
+final TextEditingController lastNameController = TextEditingController();
+final TextEditingController emailController = TextEditingController();
+final TextEditingController passwordController = TextEditingController();
+
+// Firebase instance
+final FirebaseAuth _auth = FirebaseAuth.instance;
+final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+
+
+
+// ************* REGISTRATION CODE **************
+/// Registers a new user using email and password authentication.
+/// 
+/// This function creates a new user account with the provided email and 
+/// password, then stores additional user information, such as first name, 
+/// last name, email, account creation timestamp, and role in the Firestore 
+/// database under the 'users' collection. If the registration is successful, 
+/// a success message is printed to the console; otherwise, an error message 
+/// is printed.
+/// 
+/// The email, password, first name, and last name are obtained from their 
+/// respective text controllers and trimmed of any extraneous whitespace 
+/// before use.
+Future<void> registerUser() async {
+  try {
+    // Create user with email and password
+    UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
+      email: emailController.text.trim(),
+      password: passwordController.text.trim(),
+    );
+
+    // Get the user ID
+    String uid = userCredential.user!.uid;
+
+    // Save additional user data to Firestore
+    await _firestore.collection('users').doc(uid).set({
+      'firstName': firstNameController.text.trim(),
+      'lastName': lastNameController.text.trim(),
+      'email': emailController.text.trim(),
+      'createdAt': FieldValue.serverTimestamp(),
+      'role': 'user', // Optional: define role if needed
+    });
+
+    print("Registration Successful!");
+  } catch (e) {
+    print("Registration Failed: $e");
+  }
+}
+
+\end{verbatim}
+
+
+
+
+// *************** SCHEDULER & OPEN TIME SLOTS CALENDAR ***************
+\subsection{Scheduler \& Open Time Slots Page}
+
+// The AppointmentSchedule page allows specialists to set their weekly availability for appointments. 
+// Users can select time slots in a weekly view, toggle availability, and save the schedule to Firebase Firestore.
+
+// The system:
+//     Displays each day of the week (Monday - Sunday).
+//     Breaks each day into hourly time slots.
+//     Prevents selecting slots for past days.
+//     Persists the schedule data on Firestore.
+//     Supports week navigation (forward and backward).
+
+
+ \\core_variables{Scheduler}
+
+  \begin{verbatim}
+  late DateTime _currentWeekStart;
+  final bool _is24HourFormat = false;
+  List<TimeSlot> _timeSlots = [];
+  bool _isExpanded = false;
+  final List<String> _days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  // _currentWeekStart: Tracks the starting date (Monday) of the visible week.
+  // _is24HourFormat: Toggles time format display.
+  // _timeSlots: Holds the list of available/unavailable slots for the week.
+  // _days: Labels representing weekdays.
+
+
+// Generates a flat list of TimeSlot objects representing each hour of each day.
+
+
+/// Initializes the list of time slots for the week.
+/// 
+/// Generates a list of `TimeSlot` objects representing each hour of each day
+/// from Monday to Sunday, initializing each slot as closed (`isOpen: false`).
+/// The result is a flat list of 168 `TimeSlot` objects (24 hours * 7 days).
+
+void _initializeTimeSlots() {
+  _timeSlots = List.generate(24, (hour) {
+    return List.generate(7, (day) {
+      return TimeSlot(day: day, hour: hour, isOpen: false);
+    });
+  }).expand((i) => i).toList();
+}
+
+// Navigates between weeks and reloads saved slots for the new week.
+
+/// Navigates to the next or previous week and loads saved slots from Firestore.
+///
+/// Changes the visible week by adding or subtracting 7 days from the current week
+/// start date (`_currentWeekStart`). After updating the week, loads the saved
+/// time slots for the new week from Firestore.
+///
+/// Accepts an integer `delta` parameter, which is the number of weeks to move
+/// forward (positive) or backward (negative). The method is called with a delta
+/// of 1 or -1 in the week navigation buttons.
+void _changeWeek(int delta) {
+  setState(() {
+    _currentWeekStart = _currentWeekStart.add(Duration(days: delta * 7));
+  });
+  _loadSavedSlots();
+}
+
+// Data Loading & Saving
+//  _loadSavedSlots()
+
+// Fetches the saved time slots for the user for the currently visible week from Firestore.
+
+final doc = await FirebaseFirestore.instance
+  .collection('availability')
+  .doc(user.uid)
+  .collection('weeks')
+  .doc(weekKey)
+  .get();
+
+
+// _sendToBackend(String firstName, String lastName)
+// Persists the specialist's schedule to Firestore:
+  /// Persists the specialist's schedule to Firestore.
+  ///
+  /// Sets the document identified by the week start date (`_currentWeekStart`)
+  /// in the user's availability subcollection to the given specialist data.
+  ///
+  /// The document contains the specialist's ID, address, first name, last name,
+  /// week start date, and a list of 7 * 24 time slots indicating their
+  /// availability for each hour of the week. The time slots are stored in the
+  /// `slots` field. The `lastUpdated` field is also set to the server timestamp
+  /// of the update.
+await FirebaseFirestore.instance.collection('availability').doc(user.uid)
+  .collection('weeks').doc(weekKey).set({
+    'specialistId': user.uid,
+    'specialistAddress': 'The specialist address',
+    'specialistFirstName': firstName,
+    'specialistLastName': lastName,
+    'weekStart': _currentWeekStart,
+    'slots': slotsData,
+    'lastUpdated': FieldValue.serverTimestamp(),
+});
+
+
+// TimeSlot Model (Sample)
+// TimeSlot class:
+// Constructor (TimeSlot): Initializes a TimeSlot object with a day (0-6, where 0 is Monday) and hour, and optionally sets whether the time slot is open (default is false).
+// toMap method: Converts a TimeSlot object to a map with keys 'day', 'hour', and 'isOpen', which can be used for serialization or storage.
+// fromMap factory method: Creates a new TimeSlot object from a map with keys 'day', 'hour', and 'isOpen', which can be used for deserialization or loading from storage.
+class TimeSlot {
+  final int day; // 0 = Monday, 6 = Sunday
+  final int hour;
+  bool isOpen;
+
+  TimeSlot({required this.day, required this.hour, this.isOpen = false});
+
+  Map<String, dynamic> toMap() {
+    return {'day': day, 'hour': hour, 'isOpen': isOpen};
+  }
+
+  factory TimeSlot.fromMap(Map<String, dynamic> map) {
+    return TimeSlot(day: map['day'], hour: map['hour'], isOpen: map['isOpen']);
+  }
+}
+\end{verbatim}
+
+
+
+
+// **************** USER DETAILS & BOOK APPOINTMENT ****************
+\subsection{User Details \& Book Appointment} 
+// User can view their details and book appointments with specialists.
+
+\start{verbatim}
+
+  bool toggleReviewField = false;
+  bool toggleLikeIcon = false;
+  final ReviewService _reviewService = ReviewService();
+
+  @override
+  /// Initializes the state of the widget.
+  ///
+  /// Calls the superclass's `initState` method, and then fetches the services
+  /// provided by the given specialist.
+  void initState() {
+    super.initState();
+    fetchServices();
+  }
+
+  /// Fetches services provided by the given specialist.
+  ///
+  /// This function retrieves all documents from the 'services' subcollection of the
+  /// specialist document with the given ID. It prints the count of services and
+  /// the service data for each service to the console.
+  ///
+  /// The function is asynchronous and returns a Future that resolves once the
+  /// data has been fetched.
+  void fetchServices() async {
+    final snapshot = await FirebaseFirestore.instance.collection('users').doc(widget.userId).collection('services').get();
+
+    print('Manual Fetch - Services count: ${snapshot.docs.length}');
+    for (var doc in snapshot.docs) {
+      print('Service Data: ${doc.data()}');
+    }
+  }
+
+
+  /// Submits a review for a specialist.
+  ///
+  /// Submits a review with the given `rating` and `comment` for the specialist
+  /// with the provided `userId`. Shows a success message if the submission is
+  /// successful, and shows an error message if the submission fails.
+  ///
+  /// Parameters:
+  /// - `context`: The BuildContext to use for showing a SnackBar.
+  /// - `rating`: An integer representing the user's rating for the specialist.
+  /// - `comment`: A string containing the user's comments or feedback.
+  void _submitReview(context, int rating, String comment) async {
+    String result = await _reviewService.submitReview(
+      userId: widget.userId,
+      rating: rating,
+      comment: comment,
+    );
+
+    if (result == 'success') {
+      setState(() => toggleReviewField = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Review submitted successfully!')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result)),
+      );
+    }
+  }
+
+\paragraph{Make appointment example:}
+DateTime _selectedDate = DateTime.now();
+  // TimeSlot? _selectedSlot;
+  final List<TimeSlot> _selectedSlots = [];
+  final _firestore = FirebaseFirestore.instance;
+
+  // final _auth = FirebaseAuth.instance;
+
+  /// Calculates the first Monday of the week for the given date.
+  ///
+  /// Given a date, the method subtracts days until the weekday of the date is
+  /// Monday (DateTime.monday). The resulting date is the first Monday of the
+  /// week.
+  DateTime _getFirstMonday(DateTime date) {
+    date = DateTime(date.year, date.month, date.day);
+    while (date.weekday != DateTime.monday) {
+      date = date.subtract(const Duration(days: 1));
+    }
+    return date;
+  }
+
+  /// Fetches the availability of the selected specialist for the selected week.
+  ///
+  /// The method first calculates the start of the current week by finding the
+  /// first Monday of the week. It then fetches the Firestore document for the
+  /// selected specialist's availability for the current week. If the document
+  /// does not exist, an empty list is returned.
+  ///
+  /// The method then filters the fetched time slots for the selected date and
+  /// returns a list of time slots that are open on the selected date.
+  Future<List<TimeSlot>> _getAvailability() async {
+    final weekStart = _getFirstMonday(_selectedDate);
+    final doc = await _firestore.collection('availability').doc(widget.specialistId).collection('weeks').doc(weekStart.toIso8601String()).get();
+
+
+   
+    if (!doc.exists) return [];
+    
+    final slots = (doc.data()!['slots'] as List).map((slot) => TimeSlot.fromMap(slot)).toList();
+
+    // Filter slots for selected date
+    final selectedWeekday = _selectedDate.weekday - 1; // Monday = 0
+    return slots.where((slot) => slot.day == selectedWeekday && slot.isOpen).toList();
+  }
+
+  /// Books selected time slots for an appointment with the given client's first and last name.
+  ///
+  /// The method first checks if any time slots have been selected. If no slots are selected,
+  /// a message is shown to the user. It then retrieves the current authenticated user and
+  /// checks if the user is available. If the user is not authenticated, the function exits.
+  ///
+  /// A Firebase Firestore batch operation is initiated to ensure atomic updates. The start
+  /// of the current week is calculated, and the existing availability for the selected
+  /// specialist is fetched from Firestore. The selected time slots are then iterated over,
+  /// creating a new appointment document for each slot and updating the slot's availability
+  /// to closed in the Firestore document.
+  ///
+  /// After updating the Firestore documents, the batch operation is committed, and a success
+  /// message is displayed indicating the number of slots booked. If any error occurs during
+  /// the operation, an error message is displayed to the user.
+
+  Future<void> _bookAppointment(String firstName, String lastName) async {
+    if (_selectedSlots.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Please select at least one time slot')),
+      );
+      return;
+    }
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+      final weekStart = _getFirstMonday(_selectedDate);
+      final weekKey = weekStart.toIso8601String();
+      final availabilityRef = FirebaseFirestore.instance.collection('availability').doc(widget.specialistId).collection('weeks').doc(weekKey);
+
+      // Get current availability
+      final doc = await availabilityRef.get();
+      List<TimeSlot> slots = [];
+      if (doc.exists) {
+        slots = (doc.data()!['slots'] as List).map((s) => TimeSlot.fromMap(s)).toList();
+      }
+
+      // Create appointments and update availability
+      for (final slot in _selectedSlots) {
+        // Create appointment
+        final appointmentRef = FirebaseFirestore.instance.collection('appointments').doc();
+
+        batch.set(appointmentRef, {
+          'address': 'The client address',
+          'appointmentId': appointmentRef.id,
+          'clientFirstName': firstName,
+          'clientLastName': lastName,
+          'specialistId': widget.specialistId,
+          'clientId': user.uid,
+          'date': Timestamp.fromDate(DateTime(
+            _selectedDate.year,
+            _selectedDate.month,
+            _selectedDate.day,
+            slot.hour,
+          )),
+          'status': 'booked',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+
+        // Update availability
+        final index = slots.indexWhere((s) => s.day == slot.day && s.hour == slot.hour);
+        if (index != -1) {
+          slots[index] = slots[index].copyWith(isOpen: false);
+        }
+      }
+
+      // Update availability document
+      batch.set(
+          availabilityRef,
+          {
+            'weekStart': Timestamp.fromDate(weekStart),
+            'slots': slots.map((s) => s.toMap()).toList(),
+            'lastUpdated': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true));
+
+      await batch.commit();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Successfully booked ${_selectedSlots.length} slots')),
+      );
+      setState(() => _selectedSlots.clear());
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Booking failed: $e')),
+      );
+    }
+  }
+
+\end{verbatim}
+
+
+
+
+// *************** DISPLAY APPOINTMENTS ***************
+\paragraph{Display appointments:}
+// This code snippet is part of a the application that displays appointments for a user or specialist.
+\begin{verbatim}
+  final AppointmentRepository _repo = AppointmentRepository();
+  List<AppointmentModel> _appointments = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAppointments();
+  }
+
+  /// Loads appointments for the current user.
+  ///
+  /// Uses the [AppointmentRepository] to fetch the appointments for the current
+  /// user, and updates the [_appointments] list and [_isLoading] flag accordingly.
+  ///
+  /// This method is called in [initState] to load the appointments when the
+  /// widget is first created.
+  ///
+  /// If the user is a specialist, the appointments are loaded for the specialist's
+  /// bookings. Otherwise, the appointments are loaded for the user's bookings.
+  Future<void> _loadAppointments() async {
+    final userId = FirebaseAuth.instance.currentUser!.uid;
+    final appointments = await _repo.fetchAppointments(
+      userId: userId,
+      isSpecialist: widget.isSpecialist,
+    );
+    setState(() {
+      _appointments = appointments;
+      _isLoading = false;
+    });
+  }
+\end{verbatim}
+
+
+
+
+// *************** USER PROFILE ***************
+\subsection{Profile}
+// The user profile screen is a stateful widget that displays the user's profile 
+// information and allows them to update their profile picture and name.
+
+The User Profile stores:
+ String? userName;
+  Uint8List? _imageBytes;
+  bool _isLoading = false;
+
+  final FirebaseService _firebaseService = FirebaseService();
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchUserData();
+
+    Provider.of<SpecialistProvider>(context, listen: false).fetchSpecialistData();
+  }
+
+  /// Fetches user data from Firestore for the current authenticated user.
+  ///
+  /// Retrieves the document corresponding to the current user's UID from the
+  /// 'users' collection in Firestore. If the document exists, it extracts the
+  /// user's first name and profile image (encoded in base64). The first name
+  /// is stored in the `userName` field, and the profile image is decoded to
+  /// `Uint8List` and stored in `_imageBytes`. If the image decoding fails,
+  /// an error is caught, and appropriate handling (such as setting a default
+  /// image) should be implemented.
+
+  Future<void> _fetchUserData() async {
+    User? user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+      // print(userDoc.data());
+      if (userDoc.exists) {
+        // Use the data() method to access the document's data as a Map
+        Map<String, dynamic>? userData = userDoc.data() as Map<String, dynamic>?;
+
+        if (userData != null) {
+          setState(() {
+            // Safely access the 'firstName' field
+            userName = userData['firstName'] as String?;
+
+            // Safely access the 'profileImage' field
+            String? base64Image = userData['profileImage'] as String?;
+            if (base64Image != null) {
+              try {
+                _imageBytes = base64Decode(base64Image);
+              } catch (e) {
+                // print("Error decoding base64 image: $e");
+                // Handle the error, e.g., set a default image
+              }
+            }
+          });
+        }
+      }
+    }
+  }
+
+  /// Allows the user to pick an image from their device's gallery, and then
+  ///
+  /// 1. Converts the picked image to bytes.
+  /// 2. Encodes the image bytes to a base64 string.
+  /// 3. Updates the `_imageBytes` field with the encoded image bytes.
+  /// 4. Calls the [_saveImageToFirestore] method to store the base64 image in Firestore.
+  Future<void> _pickImage() async {
+    final pickedFile = await ImagePicker().pickImage(source: ImageSource.gallery);
+    if (pickedFile != null) {
+      Uint8List imageBytes = await pickedFile.readAsBytes();
+      String base64Image = base64Encode(imageBytes);
+      setState(() {
+        _imageBytes = imageBytes;
+      });
+      await _saveImageToFirestore(base64Image);
+    }
+  }
+
+  /// Stores the given base64-encoded image in Firestore for the current authenticated user.
+  ///
+  /// Updates the 'profileImage' field of the user document in the 'users' collection
+  /// with the given base64 image. If the document doesn't exist, this method will
+  /// create it.
+  Future<void> _saveImageToFirestore(String base64Image) async {
+    User? user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'profileImage': base64Image,
+      }, SetOptions(merge: true));
+    }
+  }
+
+\end{verbatim}
+
+
+
+
+// *************** APP STORAGE MANAGEMENT ***************
+\paragraph{App Storage:}
+// The SharedPreferencesHelper class provides methods for saving and retrieving passwords from SharedPreferences
+\begin{verbatim}
+class SharedPreferencesHelper {
+  // Key for storing the password
+  static const String _passwordKey = 'user_password';
+
+  /// Save the password to SharedPreferences.
+  ///
+  /// This method asynchronously stores the password in SharedPreferences.
+  /// It uses the [_passwordKey] key to store the password.
+  ///
+  /// The method returns a [Future] that completes when the password has been
+  /// stored.
+  static Future<void> savePassword(String password) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_passwordKey, password);
+  }
+
+  /// Retrieve the password from SharedPreferences.
+  ///
+  /// This method asynchronously retrieves the password from SharedPreferences.
+  /// It uses the [_passwordKey] key to retrieve the password.
+  ///
+  /// The method returns a [Future] that resolves to the password if it exists,
+  /// or `null` if the password has not been stored.
+  static Future<String?> getPassword() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_passwordKey);
+  }
+
+  /// Clear the password from SharedPreferences.
+  ///
+  /// This method asynchronously removes the password from SharedPreferences.
+  /// It uses the [_passwordKey] key to remove the password.
+  ///
+  /// The method returns a [Future] that resolves when the password has been
+  /// cleared.
+  static Future<void> clearPassword() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_passwordKey);
+  }
+}
+\end{verbatim}
+
+
+
+
+// ******************** LOCALIZATION ********************
+\paragraph{Localization}
+// StyleHub supports multiple languages using Flutter's localization support.
+// The MapLocale class represents a locale and its associated data
+// This mixin provides a set of constants and maps for translating text into different languages. It defines:
+
+// Constants for common text labels (e.g. changeLanguage, find, stylists, etc.)
+// Maps for English (EN) and Russian (RU) translations, where each map associates the constants with their translated values.
+// The methods (or rather, the maps) in this mixin do the following:
+
+// EN: Returns a map of English translations for the defined constants.
+// RU: Returns a map of Russian translations for the defined constants.
+// Note that this mixin does not have any methods in the classical sense, but rather provides a set of constants and maps that can be used for localization purposes.
+
+\begin{verbatim}
+const List<MapLocale> LOCALES = [
+  MapLocale('en', LocaleData.EN),
+  MapLocale('ru', LocaleData.RU),
+];
+
+mixin LocaleData {
+  static const String changeLanguage = 'Choose your language';
+  static const String find = 'Find';
+  static const String stylists = 'Stylists';
+  static const String stylist = 'Stylist';
+  static const String nearYou = 'Near You';
+
+  // FOR ENGLISH
+  static const Map<String, dynamic> EN = {
+    changeLanguage: 'Choose your language ',
+    find: 'Find',
+    stylists: 'Stylists',
+    nearYou: 'Near You',
+  }; 
+   // FOR RUSSIAN
+  static const Map<String, dynamic> RU = {
+    changeLanguage: 'Выберите язык  ',
+    find: 'Найти',
+    stylists: 'Стилисты',
+    nearYou: 'Рядом',
+  }
+}
+\end{verbatim}
+
+
+
+
+// *************** DEPENDENCIES SETUP ***************
+\paragraph{Setup (pubspec.yaml):}
+// The dependencies section of the pubspec.yaml file lists the packages that the app depends on
+\begin{verbatim}
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: ^3.9.0
+  firebase_auth: ^5.3.4
+  cupertino_icons: ^1.0.8
+  cloud_firestore: ^5.6.0
+  image_picker: ^1.1.2
+  shared_preferences: ^2.3.5
+  flutter_screenutil: ^5.9.3
+  flutter_localization: ^0.3.1
+  intl: ^0.19.0
+  provider: ^6.1.2
+  geolocator: ^13.0.2
+  cached_network_image: ^3.4.1
+  firebase_storage: ^12.4.2
+  flutter_svg: ^2.0.17
+  flutter_floating_bottom_bar: ^1.2.1+1
+  iconsax: ^0.0.8
+  table_calendar: ^3.1.3
+  time_range: ^1.1.1
+  easy_date_timeline: ^2.0.6
+  uuid: ^4.5.1
+\end{verbatim}
+
+
+
+
+
+// *************** THE APP STATE MANAGEMENT SYSTEM ***************
+\paragraph{State Management:}
+// The app uses Provider for state management, which allows for easy access to shared data across the app.
+// The Provider class is a state management widget that wraps the app's root widget and provides access to the app's state.
+\begin{verbatim}
+ final List<SingleChildWidget> changeNotifierProvider = [
+  ChangeNotifierProvider<SpecialistProvider>(create: (context) => SpecialistProvider()),
+  ChangeNotifierProvider<ServicesProvider>(create: (context) => ServicesProvider()),
+];
+
+\end{verbatim}
+
+// *************** GEOLOCATION AND LOCATION SERVICES ***************
+\subsection{Geolocation}
+Geolocation is used to:
+\begin{itemize}
+    \item Filter specialists by proximity
+    \item Suggest nearby specialists
+\end{itemize}
+
+\paragraph{Code Snippet: Getting User Location}
+\begin{verbatim}
+Position position = await Geolocator.getCurrentPosition(
+    desiredAccuracy: LocationAccuracy.high);
+\end{verbatim}
+
+\paragraph{Saving Location to Firestore}
+\begin{verbatim}
+/// Updates the user's location in Firestore with the given latitude and longitude.
+/// 
+/// The location is stored as a `GeoPoint` object, which includes the latitude and longitude
+/// coordinates of the user's current position. This information is used to provide
+/// location-based features such as filtering specialists by proximity or suggesting nearby
+/// specialists.
+///
+/// The update operation targets the user's document in the 'users' collection, identified
+/// by the `userId`. Ensure that the `userId` is correctly specified and that Firestore
+/// permissions are configured to allow updates to the user's location.
+///
+/// Example:
+/// ```dart
+/// Position position = await Geolocator.getCurrentPosition(
+///   desiredAccuracy: LocationAccuracy.high);
+///
+/// FirebaseFirestore.instance.collection('users').doc(userId).update({
+///   'location': GeoPoint(position.latitude, position.longitude)
+/// });
+/// ```
+
+FirebaseFirestore.instance.collection('users').doc(userId).update({
+  'location': GeoPoint(position.latitude, position.longitude)
+});
+\end{verbatim}
+
+\paragraph{Nearby Specialist Query (Example using GeoFlutterFire):}
+\begin{verbatim}
+GeoFirePoint center = geo.point(latitude: pos.latitude, longitude: pos.longitude);
+var collectionReference = FirebaseFirestore.instance.collection('specialists');
+String field = 'location';
+
+var stream = geo.collection(collectionRef: collectionReference)
+    .within(center: center, radius: 10, field: field);
+\end{verbatim}
+
+
+
+
+// *************** CONCLUSION ***************
+\section{Conclusion}
+// StyleHub leverages Firebase's scalable backend and Flutter's cross-platform 
+// capabilities to provide a seamless connection between specialists and clients. 
+// The app's modular design supports extensibility, including Messaging integration, 
+// and advanced search capabilities in future versions.

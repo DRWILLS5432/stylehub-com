@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "1093872308638",
+    "project_id": "stylehub-1cfee",
+    "storage_bucket": "stylehub-1cfee.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1093872308638:android:e9ceed395432bbdc29868f",
+        "android_client_info": {
+          "package_name": "com.example.stylehub"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBeXfyB445b4h7rzOKF2pT6qAjN-msOssU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1093872308638:android:0d0b42bee3d9431f29868f",
+        "android_client_info": {
+          "package_name": "com.stylehub.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBeXfyB445b4h7rzOKF2pT6qAjN-msOssU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
