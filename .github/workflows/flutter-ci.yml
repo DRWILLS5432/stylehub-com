@@ -39,84 +39,84 @@ jobs:
       - name: Generate HTML report
         run: |
           cat << 'EOF' > generate_report.dart
-          import 'dart:convert';
-          import 'dart:io';
+import 'dart:convert';
+import 'dart:io';
 
-          void main() {
-            try {
-              List issues = [];
+void main() {
+  try {
+    List issues = [];
 
-              final jsonFile = File('analysis.json');
-              if (jsonFile.existsSync()) {
-                final jsonString = jsonFile.readAsStringSync().trim();
-                if (jsonString.isNotEmpty && jsonString.startsWith('{')) {
-                  try {
-                    final jsonData = jsonDecode(jsonString);
-                    issues = jsonData['issues'] as List? ?? [];
-                  } catch (_) {}
-                }
-              }
+    final jsonFile = File('analysis.json');
+    if (jsonFile.existsSync()) {
+      final jsonString = jsonFile.readAsStringSync().trim();
+      if (jsonString.isNotEmpty && jsonString.startsWith('{')) {
+        try {
+          final jsonData = jsonDecode(jsonString);
+          issues = jsonData['issues'] as List? ?? [];
+        } catch (_) {}
+      }
+    }
 
-              if (issues.isEmpty) {
-                final rawOutput = File('analyze_output.txt').readAsStringSync();
-                final issueLines = rawOutput
-                    .split('\n')
-                    .where((line) =>
-                      line.contains(' • ') &&
-                      !line.toLowerCase().contains('analyzing '))
-                    .toList();
+    if (issues.isEmpty) {
+      final rawOutput = File('analyze_output.txt').readAsStringSync();
+      final issueLines = rawOutput
+          .split('\n')
+          .where((line) =>
+            line.contains(' • ') &&
+            !line.toLowerCase().contains('analyzing '))
+          .toList();
 
-                for (var line in issueLines) {
-                  final parts = line.split(' • ');
-                  if (parts.length >= 4) {
-                    final severity = parts[0].trim().toLowerCase();
-                    final message = parts[1].trim();
-                    final location = parts[2].trim();
-                    final code = parts[3].trim();
-                    final locationParts = location.split(':');
-                    final file = locationParts[0];
-                    final lineNum = locationParts.length > 1 ? locationParts[1] : 'unknown';
+      for (var line in issueLines) {
+        final parts = line.split(' • ');
+        if (parts.length >= 4) {
+          final severity = parts[0].trim().toLowerCase();
+          final message = parts[1].trim();
+          final location = parts[2].trim();
+          final code = parts[3].trim();
+          final locationParts = location.split(':');
+          final file = locationParts[0];
+          final lineNum = locationParts.length > 1 ? locationParts[1] : 'unknown';
 
-                    issues.add({
-                      'severity': severity,
-                      'message': message,
-                      'location': {'file': file, 'startLine': lineNum},
-                      'code': code,
-                    });
-                  }
-                }
-              }
+          issues.add({
+            'severity': severity,
+            'message': message,
+            'location': {'file': file, 'startLine': lineNum},
+            'code': code,
+          });
+        }
+      }
+    }
 
-              int errorCount = 0, warningCount = 0, infoCount = 0;
-              for (var issue in issues) {
-                final severity = (issue['severity'] ?? '').toString().toLowerCase();
-                if (severity.contains('error')) errorCount++;
-                else if (severity.contains('warning')) warningCount++;
-                else if (severity.contains('info')) infoCount++;
-              }
+    int errorCount = 0, warningCount = 0, infoCount = 0;
+    for (var issue in issues) {
+      final severity = (issue['severity'] ?? '').toString().toLowerCase();
+      if (severity.contains('error')) errorCount++;
+      else if (severity.contains('warning')) warningCount++;
+      else if (severity.contains('info')) infoCount++;
+    }
 
-              final libDir = Directory('lib');
-              var totalLines = 0;
-              final languages = <String, int>{};
-              if (libDir.existsSync()) {
-                libDir.listSync(recursive: true).forEach((entity) {
-                  if (entity is File && !entity.path.contains('/generated/')) {
-                    final ext = entity.path.split('.').last.toLowerCase();
-                    final lines = entity.readAsLinesSync().length;
-                    totalLines += lines;
-                    final lang = ext == 'dart'
-                        ? 'Dart'
-                        : ext == 'yaml'
-                            ? 'YAML'
-                            : ext == 'json'
-                                ? 'JSON'
-                                : 'Other';
-                    languages[lang] = (languages[lang] ?? 0) + lines;
-                  }
-                });
-              }
+    final libDir = Directory('lib');
+    var totalLines = 0;
+    final languages = <String, int>{};
+    if (libDir.existsSync()) {
+      libDir.listSync(recursive: true).forEach((entity) {
+        if (entity is File && !entity.path.contains('/generated/')) {
+          final ext = entity.path.split('.').last.toLowerCase();
+          final lines = entity.readAsLinesSync().length;
+          totalLines += lines;
+          final lang = ext == 'dart'
+              ? 'Dart'
+              : ext == 'yaml'
+                  ? 'YAML'
+                  : ext == 'json'
+                      ? 'JSON'
+                      : 'Other';
+          languages[lang] = (languages[lang] ?? 0) + lines;
+        }
+      });
+    }
 
-              final html = StringBuffer('''
+    final html = StringBuffer('''
 <!DOCTYPE html>
 <html>
 <head>
@@ -216,15 +216,15 @@ jobs:
     </tr>
 ''');
 
-              for (var issue in issues) {
-                final severity = (issue['severity'] ?? 'unknown').toString().toLowerCase();
-                final file = issue['location']?['file'] ?? 'unknown';
-                final line = issue['location']?['startLine'] ?? 'unknown';
-                final message = issue['message'] ?? 'No message';
-                final code = issue['code'] ?? 'unknown';
-                final icon = severity == 'error' ? '🛑' : severity == 'warning' ? '⚠️' : severity == 'info' ? 'ℹ️' : '';
+    for (var issue in issues) {
+      final severity = (issue['severity'] ?? 'unknown').toString().toLowerCase();
+      final file = issue['location']?['file'] ?? 'unknown';
+      final line = issue['location']?['startLine'] ?? 'unknown';
+      final message = issue['message'] ?? 'No message';
+      final code = issue['code'] ?? 'unknown';
+      final icon = severity == 'error' ? '🛑' : severity == 'warning' ? '⚠️' : severity == 'info' ? 'ℹ️' : '';
 
-                html.writeln('''
+      html.writeln('''
     <tr class="$severity">
       <td><span class="severity-badge">$icon $severity</span></td>
       <td>$file</td>
@@ -233,9 +233,9 @@ jobs:
       <td>$code</td>
     </tr>
 ''');
-              }
+    }
 
-              html.writeln('''
+    html.writeln('''
   </table>
 
   <div class="footer-note">
@@ -270,14 +270,14 @@ jobs:
 </html>
 ''');
 
-              Directory('analysis-report').createSync();
-              File('analysis-report/index.html').writeAsStringSync(html.toString());
+    Directory('analysis-report').createSync();
+    File('analysis-report/index.html').writeAsStringSync(html.toString());
 
-            } catch (e) {
-              print('Error: \$e');
-            }
-          }
-          EOF
+  } catch (e) {
+    print('Error: \$e');
+  }
+}
+EOF
           dart run generate_report.dart
 
       - name: Upload analysis report
