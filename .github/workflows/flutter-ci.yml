@@ -95,39 +95,126 @@ jobs:
                 else if (severity.contains('info')) infoCount++;
               }
 
-              // (the rest of the HTML generation code continues unchanged — including your table, badges, and Chart.js)
+              final libDir = Directory('lib');
+              var totalLines = 0;
+              final languages = <String, int>{};
+              if (libDir.existsSync()) {
+                libDir.listSync(recursive: true).forEach((entity) {
+                  if (entity is File && !entity.path.contains('/generated/')) {
+                    final ext = entity.path.split('.').last.toLowerCase();
+                    final lines = entity.readAsLinesSync().length;
+                    totalLines += lines;
+                    final lang = ext == 'dart'
+                        ? 'Dart'
+                        : ext == 'yaml'
+                            ? 'YAML'
+                            : ext == 'json'
+                                ? 'JSON'
+                                : 'Other';
+                    languages[lang] = (languages[lang] ?? 0) + lines;
+                  }
+                });
+              }
 
               final html = StringBuffer('''
-              <!DOCTYPE html>
-              <html>
-              <head>
-                <title>StyleHub Analysis Report</title>
-                <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-                <style>
-                  body { font-family: "Segoe UI", sans-serif; margin: 20px; background: #f4f6f9; color: #333; }
-                  .severity-badge { padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold; text-transform: uppercase; font-size: 12px; }
-                  .error .severity-badge { background: #e74c3c; }
-                  .warning .severity-badge { background: #f39c12; }
-                  .info .severity-badge { background: #3498db; }
-                  table { width: 100%; border-collapse: collapse; background: white; margin-top: 20px; }
-                  th, td { padding: 10px; border: 1px solid #ddd; font-size: 14px; }
-                  th { background: #ecf0f1; position: sticky; top: 0; }
-                  tr:hover { background: #f1f1f1; }
-                </style>
-              </head>
-              <body>
-                <h1>StyleHub Code Analysis Report</h1>
-                <p><strong>Total Issues:</strong> ${issues.length}</p>
-                <canvas id="issueChart"></canvas>
-                <table>
-                  <tr>
-                    <th>Severity</th>
-                    <th>File</th>
-                    <th>Line</th>
-                    <th>Message</th>
-                    <th>Code</th>
-                  </tr>
-              ''');
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>StyleHub Analysis Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #f4f6f9;
+      color: #333;
+    }
+    h1 {
+      margin-top: 0;
+      color: #2c3e50;
+    }
+    .report-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 30px;
+      flex-wrap: wrap;
+    }
+    .summary {
+      flex: 1;
+      background-color: #fff;
+      padding: 15px 20px;
+      border-left: 5px solid #3498db;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+    #issueChart {
+      max-width: 250px;
+      max-height: 250px;
+      margin-top: 5px;
+    }
+    table {
+      width: 100%;
+      margin-top: 20px;
+      border-collapse: collapse;
+      background-color: white;
+      box-shadow: 0 0 5px rgba(0,0,0,0.05);
+    }
+    th, td {
+      padding: 10px;
+      border: 1px solid #ddd;
+      font-size: 14px;
+      text-align: left;
+    }
+    th {
+      background-color: #ecf0f1;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+    tr:hover {
+      background-color: #f1f1f1;
+    }
+    .severity-badge {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 5px;
+      font-weight: bold;
+      font-size: 12px;
+      color: white;
+      text-transform: uppercase;
+    }
+    .error .severity-badge { background: #e74c3c; }
+    .warning .severity-badge { background: #f39c12; }
+    .info .severity-badge { background: #3498db; }
+    .footer-note {
+      margin-top: 20px;
+      font-size: 12px;
+      color: #888;
+    }
+  </style>
+</head>
+<body>
+  <h1>StyleHub Code Analysis Report</h1>
+  <div class="report-header">
+    <div class="summary">
+      <p><strong>Total Issues:</strong> ${issues.length}</p>
+      <p><strong>Total Lines of Code:</strong> $totalLines</p>
+      <p><strong>Languages Used:</strong> ${languages.keys.join(', ')}</p>
+    </div>
+    <canvas id="issueChart"></canvas>
+  </div>
+
+  <table>
+    <tr>
+      <th>Severity</th>
+      <th>File</th>
+      <th>Line</th>
+      <th>Message</th>
+      <th>Code</th>
+    </tr>
+''');
 
               for (var issue in issues) {
                 final severity = (issue['severity'] ?? 'unknown').toString().toLowerCase();
@@ -138,36 +225,50 @@ jobs:
                 final icon = severity == 'error' ? '🛑' : severity == 'warning' ? '⚠️' : severity == 'info' ? 'ℹ️' : '';
 
                 html.writeln('''
-                  <tr class="$severity">
-                    <td><span class="severity-badge">$icon $severity</span></td>
-                    <td>$file</td>
-                    <td>$line</td>
-                    <td>$message</td>
-                    <td>$code</td>
-                  </tr>
-                ''');
+    <tr class="$severity">
+      <td><span class="severity-badge">$icon $severity</span></td>
+      <td>$file</td>
+      <td>$line</td>
+      <td>$message</td>
+      <td>$code</td>
+    </tr>
+''');
               }
 
               html.writeln('''
-                </table>
-                <script>
-                  const ctx = document.getElementById('issueChart');
-                  new Chart(ctx, {
-                    type: 'doughnut',
-                    data: {
-                      labels: ['Errors', 'Warnings', 'Info'],
-                      datasets: [{
-                        data: [$errorCount, $warningCount, $infoCount],
-                        backgroundColor: ['#e74c3c', '#f39c12', '#3498db'],
-                      }]
-                    },
-                    options: {
-                      plugins: { legend: { position: 'bottom' } }
-                    }
-                  });
-                </script>
-              </body></html>
-              ''');
+  </table>
+
+  <div class="footer-note">
+    Report generated using Flutter analyze and custom Dart script.
+  </div>
+
+  <script>
+    const ctx = document.getElementById('issueChart');
+    new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: ['Errors', 'Warnings', 'Info'],
+        datasets: [{
+          label: 'Issues',
+          data: [$errorCount, $warningCount, $infoCount],
+          backgroundColor: ['#e74c3c', '#f39c12', '#3498db'],
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: {
+          legend: {
+            position: 'bottom'
+          }
+        }
+      }
+    });
+  </script>
+</body>
+</html>
+''');
 
               Directory('analysis-report').createSync();
               File('analysis-report/index.html').writeAsStringSync(html.toString());
@@ -178,7 +279,6 @@ jobs:
           }
           EOF
           dart run generate_report.dart
-
 
       - name: Upload analysis report
         uses: actions/upload-artifact@v4
