@@ -33,17 +33,10 @@ jobs:
 
       - name: Run Flutter analyze and capture output
         run: |
-          # Run analyze and save raw output for debugging
           flutter analyze --no-fatal-infos --no-fatal-warnings > analyze_output.txt || true
-          # Attempt to generate JSON output
           flutter analyze --no-fatal-infos --no-fatal-warnings --write=analysis.json || true
-          # Debug: Output contents of both files
-          echo "Raw analyze output:"
-          cat analyze_output.txt || echo "analyze_output.txt is empty"
-          echo "analysis.json content:"
-          cat analysis.json || echo "analysis.json is empty or invalid"
 
-      - name: Generate HTML report
+      - name: Generate HTML Report
         run: |
           cat << 'EOF' > generate_report.dart
           import 'dart:convert';
@@ -51,8 +44,8 @@ jobs:
 
           void main() {
             try {
-              // Try to parse analysis.json
               List issues = [];
+
               final jsonFile = File('analysis.json');
               if (jsonFile.existsSync()) {
                 final jsonString = jsonFile.readAsStringSync().trim();
@@ -60,20 +53,13 @@ jobs:
                   try {
                     final jsonData = jsonDecode(jsonString);
                     issues = jsonData['issues'] as List? ?? [];
-                  } catch (e) {
-                    print('Failed to parse analysis.json: $e');
-                  }
-                } else {
-                  print('Invalid or empty JSON in analysis.json: $jsonString');
+                  } catch (_) {}
                 }
-              } else {
-                print('analysis.json does not exist');
               }
 
-              // If no issues from JSON, try parsing raw analyze output
               if (issues.isEmpty) {
                 final rawOutput = File('analyze_output.txt').readAsStringSync();
-                final issueLines = rawOutput.split('\n').where((line) => line.contains(' • ')).toList();
+                final issueLines = rawOutput.split('\\n').where((line) => line.contains(' • ')).toList();
                 for (var line in issueLines) {
                   final parts = line.split(' • ');
                   if (parts.length >= 4) {
@@ -92,40 +78,51 @@ jobs:
                     });
                   }
                 }
-                print('Parsed ${issues.length} issues from raw output');
               }
 
-              // Count lines of code and detect languages
               final libDir = Directory('lib');
               var totalLines = 0;
               final languages = <String, int>{};
               if (libDir.existsSync()) {
                 libDir.listSync(recursive: true).forEach((entity) {
                   if (entity is File && !entity.path.contains('/generated/')) {
-                    final extension = entity.path.split('.').last.toLowerCase();
+                    final ext = entity.path.split('.').last.toLowerCase();
                     final lines = entity.readAsLinesSync().length;
                     totalLines += lines;
-                    final lang = extension == 'dart' ? 'Dart' : extension == 'yaml' ? 'YAML' : extension == 'json' ? 'JSON' : 'Other';
+                    final lang = ext == 'dart' ? 'Dart' : ext == 'yaml' ? 'YAML' : ext == 'json' ? 'JSON' : 'Other';
                     languages[lang] = (languages[lang] ?? 0) + lines;
                   }
                 });
               }
 
-              // Generate HTML report
+              int errorCount = 0, warningCount = 0, infoCount = 0;
+              for (var issue in issues) {
+                final severity = (issue['severity'] ?? '').toString().toLowerCase();
+                if (severity == 'error') errorCount++;
+                else if (severity == 'warning') warningCount++;
+                else if (severity == 'info') infoCount++;
+              }
+
               final html = StringBuffer('''
               <!DOCTYPE html>
               <html>
               <head>
                 <title>StyleHub Analysis Report</title>
+                <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
                 <style>
-                  body { font-family: Arial, sans-serif; margin: 20px; }
-                  table { border-collapse: collapse; width: 100%; }
-                  th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                  th { background-color: #f2f2f2; }
-                  .error { color: red; }
-                  .warning { color: orange; }
-                  .info { color: blue; }
-                  .summary { margin-bottom: 20px; }
+                  body { font-family: "Segoe UI", sans-serif; margin: 20px; background: #f4f6f9; color: #333; }
+                  h1 { color: #2c3e50; }
+                  .summary { background: #fff; padding: 15px; margin-bottom: 20px; border-left: 5px solid #3498db; }
+                  table { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 0 5px rgba(0,0,0,0.1); }
+                  th, td { padding: 10px; border: 1px solid #ddd; font-size: 14px; }
+                  th { background: #ecf0f1; color: #2c3e50; position: sticky; top: 0; }
+                  tr:hover { background: #f1f1f1; }
+                  .severity-badge { padding: 5px 10px; border-radius: 5px; color: white; font-weight: bold; font-size: 12px; text-transform: uppercase; }
+                  .error .severity-badge { background: #e74c3c; }
+                  .warning .severity-badge { background: #f39c12; }
+                  .info .severity-badge { background: #3498db; }
+                  .footer-note { font-size: 12px; margin-top: 30px; color: #888; }
+                  canvas { max-width: 400px; margin-top: 20px; }
                 </style>
               </head>
               <body>
@@ -134,6 +131,7 @@ jobs:
                   <p><strong>Total Issues:</strong> ${issues.length}</p>
                   <p><strong>Total Lines of Code:</strong> $totalLines</p>
                   <p><strong>Languages Used:</strong> ${languages.keys.join(', ')}</p>
+                  <canvas id="issueChart"></canvas>
                 </div>
                 <table>
                   <tr>
@@ -145,48 +143,55 @@ jobs:
                   </tr>
               ''');
 
-              if (issues.isNotEmpty) {
-                for (var issue in issues) {
-                  final severity = issue['severity']?.toString().toLowerCase() ?? 'unknown';
-                  final file = issue['location']?['file']?.toString() ?? 'unknown';
-                  final line = issue['location']?['startLine']?.toString() ?? 'unknown';
-                  final message = issue['message']?.toString() ?? 'No message';
-                  final code = issue['code']?.toString() ?? 'unknown';
-                  html.writeln('''
-                    <tr class="$severity">
-                      <td>$severity</td>
-                      <td>$file</td>
-                      <td>$line</td>
-                      <td>$message</td>
-                      <td>$code</td>
-                    </tr>
-                  ''');
-                }
-              } else {
-                html.writeln('<tr><td colspan="5">No analysis issues found or invalid JSON output</td></tr>');
+              for (var issue in issues) {
+                final severity = (issue['severity'] ?? 'unknown').toString().toLowerCase();
+                final file = issue['location']?['file'] ?? 'unknown';
+                final line = issue['location']?['startLine'] ?? 'unknown';
+                final message = issue['message'] ?? 'No message';
+                final code = issue['code'] ?? 'unknown';
+                final icon = severity == 'error' ? '🛑' : severity == 'warning' ? '⚠️' : severity == 'info' ? 'ℹ️' : '';
+
+                html.writeln('''
+                  <tr class="$severity">
+                    <td><span class="severity-badge">$icon $severity</span></td>
+                    <td>$file</td>
+                    <td>$line</td>
+                    <td>$message</td>
+                    <td>$code</td>
+                  </tr>
+                ''');
               }
 
-              html.writeln('</table></body></html>');
+              html.writeln('''
+                </table>
+                <div class="footer-note">
+                  Report generated using Flutter analyze and custom Dart script.
+                </div>
+                <script>
+                  const ctx = document.getElementById('issueChart');
+                  new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                      labels: ['Errors', 'Warnings', 'Info'],
+                      datasets: [{
+                        data: [$errorCount, $warningCount, $infoCount],
+                        backgroundColor: ['#e74c3c', '#f39c12', '#3498db'],
+                        borderWidth: 1
+                      }]
+                    },
+                    options: {
+                      plugins: {
+                        legend: { position: 'bottom' }
+                      }
+                    }
+                  });
+                </script>
+              </body></html>''');
+
               Directory('analysis-report').createSync();
               File('analysis-report/index.html').writeAsStringSync(html.toString());
             } catch (e) {
-              print('Error generating report: $e');
-              Directory('analysis-report').createSync();
-              File('analysis-report/index.html').writeAsStringSync('''
-              <!DOCTYPE html>
-              <html>
-              <head>
-                <title>StyleHub Analysis Report</title>
-                <style>
-                  body { font-family: Arial, sans-serif; margin: 20px; }
-                  h1 { color: red; }
-                </style>
-              </head>
-              <body>
-                <h1>Error generating report: $e</h1>
-              </body>
-              </html>
-              ''');
+              print('Error generating report: \$e');
             }
           }
           EOF
