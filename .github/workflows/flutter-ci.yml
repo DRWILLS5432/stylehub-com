@@ -19,7 +19,6 @@ jobs:
       - name: Install dependencies
         run: |
           flutter pub add intl:^0.20.2
-          flutter pub add --dev dart_code_metrics
           flutter pub get
 
       - name: Create analysis options
@@ -31,14 +30,71 @@ jobs:
           echo "    undefined_operator: ignore" >> analysis_options.yaml
           echo "    equality_cannot_be_equality_operand: ignore" >> analysis_options.yaml
           echo "    undefined_identifier: ignore" >> analysis_options.yaml
-          echo "include: package:dart_code_metrics/config.yaml" >> analysis_options.yaml
 
-      - name: Run Dart Code Metrics analysis
+      - name: Run Flutter analyze and generate JSON output
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings --write=analysis.json
+
+      - name: Generate HTML report
         run: |
-          dart run dart_code_metrics:metrics analyze lib --report-to=html --report-folder=metrics-report
+          cat << 'EOF' > generate_report.dart
+          import 'dart:convert';
+          import 'dart:io';
 
-      - name: Upload analysis results
+          void main() {
+            final jsonString = File('analysis.json').readAsStringSync();
+            final issues = jsonDecode(jsonString)['issues'] as List;
+            final html = StringBuffer('''
+            <!DOCTYPE html>
+            <html>
+            <head>
+              <title>StyleHub Analysis Report</title>
+              <style>
+                body { font-family: Arial, sans-serif; margin: 20px; }
+                table { border-collapse: collapse; width: 100%; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                th { background-color: #f2f2f2; }
+                .error { color: red; }
+                .warning { color: orange; }
+                .info { color: blue; }
+              </style>
+            </head>
+            <body>
+              <h1>StyleHub Code Analysis Report</h1>
+              <table>
+                <tr>
+                  <th>Severity</th>
+                  <th>File</th>
+                  <th>Line</th>
+                  <th>Message</th>
+                  <th>Code</th>
+                </tr>
+            ''');
+
+            for (var issue in issues) {
+              final severity = issue['severity'].toString().toLowerCase();
+              final file = issue['location']['file'];
+              final line = issue['location']['startLine'];
+              final message = issue['message'];
+              final code = issue['code'];
+              html.writeln('''
+                <tr class="$severity">
+                  <td>$severity</td>
+                  <td>$file</td>
+                  <td>$line</td>
+                  <td>$message</td>
+                  <td>$code</td>
+                </tr>
+              ''');
+            }
+
+            html.writeln('</table></body></html>');
+            File('analysis-report/index.html').writeAsStringSync(html.toString());
+          }
+          EOF
+          dart run generate_report.dart
+
+      - name: Upload analysis report
         uses: actions/upload-artifact@v4
         with:
-          name: metrics-report
-          path: metrics-report/
+          name: analysis-report
+          path: analysis-report/
